@@ -1,80 +1,150 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aadhar Card Generator</title>
-  </head>
-  <body>
-    <h1>Aadhar Card Generator</h1>
-    <form id="reportCardForm" enctype="multipart/form-data">
-      <label for="english_name">Name:</label>
-      <input
-        type="text"
-        id="english_name"
-        name="english_name"
-        required
-      /><br /><br />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Aadhaar Card Generator</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: 'Segoe UI', sans-serif;
+    }
 
-      <label for="dob">Date of Birth:</label>
-      <input type="date" id="dob" name="dob" required /><br /><br />
+    body {
+      background: #f5f7fa;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
 
-      <label for="aadharNumber">Aadhar Number:</label>
-      <input
-        type="text"
-        name="aadharNumber"
-        maxlength="16"
-        required
-        placeholder="Enter 16-digit Aadhaar number"
-      /><br /><br />
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 500px;
+    }
 
-      <label for="fatherName">Father's Name:</label>
-      <input
-        type="text"
-        id="fatherName"
-        name="fatherName"
-        required
-      /><br /><br />
+    h2 {
+      margin-top: 0;
+      text-align: center;
+      color: #333;
+    }
 
-      <label for="photo">Photo:</label>
-      <input
-        type="file"
-        id="photo"
-        name="photo"
-        accept="image/*"
-        required
-      /><br /><br />
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
 
-      <button type="submit">Generate Report Card</button>
+    input, textarea {
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 100%;
+    }
+
+    textarea {
+      resize: vertical;
+    }
+
+    input[type="submit"] {
+      background-color: #007bff;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+      transition: background-color 0.3s ease;
+    }
+
+    input[type="submit"]:hover {
+      background-color: #0056b3;
+    }
+
+    .loading {
+      text-align: center;
+      display: none;
+      margin-top: 15px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 5px solid #ccc;
+      border-top-color: #007bff;
+      border-radius: 50%;
+      margin: 0 auto 10px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Aadhaar Card Generator</h2>
+    <form id="aadhaarForm" enctype="multipart/form-data">
+      <input type="text" name="english_name" placeholder="Name (English)" required />
+      <input type="text" name="hindi_name" placeholder="नाम (Hindi)" required />
+      <input type="text" name="fatherNameEnglish" placeholder="Father's Name (English)" required />
+      <input type="text" name="fatherNameHindi" placeholder="पिता का नाम (Hindi)" required />
+      <input type="date" name="dob" placeholder="Date of Birth" required />
+      <input type="text" name="aadharNumber" placeholder="Aadhaar Number (12 digits)" required pattern="\d{12}" />
+      <textarea name="addressEnglish" placeholder="Address (English)" required></textarea>
+      <textarea name="addressHindi" placeholder="पता (Hindi)" required></textarea>
+      <input type="file" name="photo" accept="image/*" required />
+      <input type="submit" value="Generate Aadhaar PDF" />
     </form>
 
-    <script>
-      document
-        .getElementById("reportCardForm")
-        .addEventListener("submit", async (event) => {
-          event.preventDefault();
-          const formData = new FormData(event.target);
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <p>Generating PDF... Please wait.</p>
+    </div>
+  </div>
 
-          const response = await fetch("/generate-report-card", {
-            method: "POST",
-            body: formData,
-          });
+  <script>
+    const form = document.getElementById('aadhaarForm');
+    const loading = document.getElementById('loading');
 
-          if (response.ok) {
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.style.display = "none";
-            a.href = url;
-            a.download = "report_card.pdf";
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            alert("Report card generated successfull");
-          } else {
-            alert("Error generating report card.");
-          }
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      loading.style.display = 'block';
+
+      const formData = new FormData(form);
+
+      try {
+        const response = await fetch('/generate-report-card', {
+          method: 'POST',
+          body: formData
         });
-    </script>
-  </body>
+
+        if (!response.ok) throw new Error('PDF generation failed');
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'aadhaar_card.pdf';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Something went wrong. Please try again.');
+        console.error(err);
+      } finally {
+        loading.style.display = 'none';
+      }
+    });
+  </script>
+</body>
 </html>
