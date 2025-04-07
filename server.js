@@ -1,4 +1,3 @@
-// Fix for async/await issue in fontkit UMD build
 require("regenerator-runtime/runtime");
 
 const express = require("express");
@@ -6,76 +5,101 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const { PDFDocument } = require("pdf-lib");
-const { translate } = require("free-translate");
 const fontkit = require("@pdf-lib/fontkit");
+const { createCanvas, registerFont } = require("canvas");
 
 const app = express();
 const PORT = 3000;
 
-// Middleware to parse form data
 app.use(express.urlencoded({ extended: true }));
-
-// Serve static files if you want to host an HTML form
 app.use(express.static("public"));
 
-// Multer config for file upload
+// Register Hindi font for canvas
+registerFont(path.join(__dirname, "fonts/NotoSansDevanagari-Regular.ttf"), {
+  family: "Noto Sans Devanagari",
+});
+
+// Multer config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/");
-  },
-  filename: (req, file, cb) => {
-    cb(null, file.originalname);
-  },
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
 const upload = multer({ storage });
 
-// Translate English name to Hindi
-const translateText = async (text) => {
-  try {
-    const translated = await translate(text, { from: "en", to: "hi" });
-    console.log("Translated:", translated);
-    return translated;
-  } catch (err) {
-    console.error("Translation failed:", err);
-    return text;
-  }
-};
+// Function to render Hindi/English text as image (wrapped)
+function renderTextAsImage(text, fontFamily, fontSize = 14, maxWidth = 300) {
+  const lines = [];
+  const canvas = createCanvas(1, 1);
+  const ctx = canvas.getContext("2d");
+  ctx.font = `${fontSize}px "${fontFamily}"`;
 
-function formatAadhaarNumber(aadhaar) {
-  return aadhaar.replace(/(.{4})/g, "$1 ").trim(); // Adds a space after every 4 digits
+  const words = text.split(" ");
+  let line = "";
+
+  for (const word of words) {
+    const testLine = line + word + " ";
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && line !== "") {
+      lines.push(line.trim());
+      line = word + " ";
+    } else {
+      line = testLine;
+    }
+  }
+  lines.push(line.trim());
+
+  const lineHeight = fontSize + 6;
+  const height = lines.length * lineHeight + 10;
+  const finalCanvas = createCanvas(maxWidth + 20, height);
+  const finalCtx = finalCanvas.getContext("2d");
+
+  finalCtx.fillStyle = "#000";
+  finalCtx.font = `${fontSize}px "${fontFamily}"`;
+
+  lines.forEach((l, i) => {
+    finalCtx.fillText(l, 10, lineHeight * (i + 1));
+  });
+
+  return finalCanvas.toBuffer("image/png");
 }
 
-// Route to handle report card PDF generation
+function formatAadhaarNumber(aadhaar) {
+  return aadhaar.replace(/(.{4})/g, "$1 ").trim();
+}
+
 app.post("/generate-report-card", upload.single("photo"), async (req, res) => {
   try {
-    const { english_name, dob, fatherName, aadharNumber } = req.body;
-    const photoPath = req.file.path;
-    const hindi_name = await translateText(english_name);
+    const {
+      english_name,
+      hindi_name,
+      dob,
+      fatherNameEnglish,
+      fatherNameHindi,
+      aadharNumber,
+      addressHindi,
+      addressEnglish,
+    } = req.body;
 
-    // Load PDF template
+    const photoPath = req.file.path;
+    const formattedAadhar = formatAadhaarNumber(aadharNumber);
+    const formattedDob = dob.split("-").reverse().join("/");
+
+    const hindi_full_address = `आत्मज: ${fatherNameHindi}, ${addressHindi}`;
+    const english_full_address = `S/O: ${fatherNameEnglish}, ${addressEnglish}`;
+
     const templateBytes = fs.readFileSync("template.pdf");
     const pdfDoc = await PDFDocument.load(templateBytes);
     pdfDoc.registerFontkit(fontkit);
 
-    // Load Hindi-compatible font (like Mangal or NotoSansDevanagari)
-    const hindifontBytes = fs.readFileSync("fonts/Mangal-Regular.ttf");
-    const hindiFont = await pdfDoc.embedFont(hindifontBytes);
-
-    const boldfontBytes = fs.readFileSync("fonts/GothamBold.ttf");
-    const boldFont = await pdfDoc.embedFont(boldfontBytes);
-
-    const mediumfontBytes = fs.readFileSync("fonts/GothamMedium.ttf");
-    const mediumFont = await pdfDoc.embedFont(mediumfontBytes);
-
-    const formattedAadhar = formatAadhaarNumber(aadharNumber);
-    const formattedDob = dob.split("-").reverse().join("/");
+    // Embed English fonts
+    const boldFont = await pdfDoc.embedFont(fs.readFileSync("fonts/GothamBold.ttf"));
+    const mediumFont = await pdfDoc.embedFont(fs.readFileSync("fonts/GothamMedium.ttf"));
 
     // Embed photo
     const photoBytes = fs.readFileSync(photoPath);
     const photoImage = await pdfDoc.embedPng(photoBytes);
     const page = pdfDoc.getPage(0);
 
-    // Draw the photo
     page.drawImage(photoImage, {
       x: 43,
       y: 570,
@@ -83,14 +107,17 @@ app.post("/generate-report-card", upload.single("photo"), async (req, res) => {
       height: 140,
     });
 
-    // Draw text (both Hindi and English)
-    page.drawText(hindi_name, {
-      x: 190,
-      y: 700,
-      size: 12,
-      font: hindiFont,
+    // Hindi name image
+    const hindiNameBuffer = renderTextAsImage(hindi_name, "Noto Sans Devanagari", 14, 300);
+    const hindiNameImage = await pdfDoc.embedPng(hindiNameBuffer);
+    page.drawImage(hindiNameImage, {
+      x: 180,
+      y: 690,
+      width: 300,
+      height: 30,
     });
 
+    // English name
     page.drawText(english_name, {
       x: 190,
       y: 683,
@@ -98,6 +125,7 @@ app.post("/generate-report-card", upload.single("photo"), async (req, res) => {
       font: mediumFont,
     });
 
+    // DOB
     page.drawText(formattedDob, {
       x: 290,
       y: 662,
@@ -105,13 +133,13 @@ app.post("/generate-report-card", upload.single("photo"), async (req, res) => {
       font: mediumFont,
     });
 
+    // Aadhaar number
     page.drawText(formattedAadhar, {
       x: 180,
       y: 480,
       size: 25,
       font: boldFont,
     });
-
     page.drawText(formattedAadhar, {
       x: 190,
       y: 105,
@@ -119,19 +147,30 @@ app.post("/generate-report-card", upload.single("photo"), async (req, res) => {
       font: boldFont,
     });
 
-    page.drawText(fatherName, {
-      x: 50,
-      y: 310,
-      size: 12,
-      //   font: customFont,
+    // Hindi address image
+    const hindiAddressBuffer = renderTextAsImage(hindi_full_address, "Noto Sans Devanagari", 13, 300);
+    const hindiAddressImage = await pdfDoc.embedPng(hindiAddressBuffer);
+    page.drawImage(hindiAddressImage, {
+      x: 20,
+      y: 280,
+      width: 300,
+      height: 60,
     });
 
-    // Final PDF response
+    // English address image (multiline support)
+    const englishAddressBuffer = renderTextAsImage(english_full_address, "Arial", 13, 300);
+    const englishAddressImage = await pdfDoc.embedPng(englishAddressBuffer);
+    page.drawImage(englishAddressImage, {
+      x: 20,
+      y: 210,
+      width: 305,
+      height: 50,
+    });
+
     const pdfBytes = await pdfDoc.save();
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdfBytes);
 
-    // Cleanup: delete uploaded photo
     fs.unlinkSync(photoPath);
   } catch (err) {
     console.error("Error generating PDF:", err);
@@ -139,7 +178,6 @@ app.post("/generate-report-card", upload.single("photo"), async (req, res) => {
   }
 });
 
-// Start the server
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
